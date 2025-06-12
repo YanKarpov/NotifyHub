@@ -4,3 +4,4 @@
 /.idea/
 **/*.prof
 cargo.lock
+.env

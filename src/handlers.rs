@@ -1,10 +1,9 @@
 use actix_web::{post, get, web, HttpResponse, Responder};
 use serde::Deserialize;
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
-use tokio::time::interval;
+use sqlx::PgPool;
+use chrono::Utc;
+use tokio::time::{interval, Duration};
 use actix_web::web::Bytes;
-use chrono::Local;
 use async_stream::stream;
 
 #[derive(Deserialize, Debug)]
@@ -13,16 +12,27 @@ pub struct Message {
     pub text: String,
 }
 
-pub type SharedQueue = Arc<Mutex<Vec<Message>>>;
-
 #[post("/enqueue")]
 pub async fn enqueue(
-    queue: web::Data<SharedQueue>,
+    db_pool: web::Data<PgPool>,
     msg: web::Json<Message>,
 ) -> impl Responder {
-    let mut q = queue.lock().unwrap();
-    q.push(msg.into_inner());
-    HttpResponse::Ok().body("Message enqueued")
+    let now = Utc::now().naive_utc();  
+
+    let query = sqlx::query(
+        "INSERT INTO messages (provider, text, status, created_at) VALUES ($1, $2, 'pending', $3)"
+    )
+    .bind(&msg.provider)
+    .bind(&msg.text)
+    .bind(now);
+
+    match query.execute(db_pool.get_ref()).await {
+        Ok(_) => HttpResponse::Ok().body("Message enqueued"),
+        Err(e) => {
+            eprintln!("Failed to insert message: {}", e);
+            HttpResponse::InternalServerError().body("Failed to enqueue message")
+        }
+    }
 }
 
 #[get("/health")]
@@ -40,7 +50,7 @@ pub async fn sse_events() -> impl Responder {
 
             let data = format!(
                 "data: {{\"event\":\"heartbeat\", \"time\":\"{}\"}}\n\n",
-                Local::now().format("%Y-%m-%d %H:%M:%S")
+                Utc::now().format("%Y-%m-%d %H:%M:%S")
             );
 
             yield Ok::<Bytes, actix_web::Error>(Bytes::from(data));
