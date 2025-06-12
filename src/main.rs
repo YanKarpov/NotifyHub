@@ -1,4 +1,5 @@
 mod handlers;
+mod worker; 
 
 use actix_web::{App, HttpServer, web};
 use tracing::{info};
@@ -34,12 +35,19 @@ async fn main() -> std::io::Result<()> {
 
     info!("Запуск сервера NotifyHub по адресу http://localhost:8080");
 
+    let db_pool_clone = db_pool.clone();
+    tokio::spawn(async move {
+        let provider = worker::MockProvider;
+        worker::worker_loop(db_pool_clone, provider).await;
+    });
+
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(db_pool.clone()))
             .service(handlers::enqueue)
             .service(handlers::health_check)
             .service(handlers::sse_events)
+            .service(handlers::get_messages)
     })
     .bind(("127.0.0.1", 8080))?
     .run()

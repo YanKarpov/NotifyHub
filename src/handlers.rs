@@ -1,7 +1,7 @@
 use actix_web::{post, get, web, HttpResponse, Responder};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sqlx::PgPool;
-use chrono::Utc;
+use chrono::{Utc, NaiveDateTime};
 use tokio::time::{interval, Duration};
 use actix_web::web::Bytes;
 use async_stream::stream;
@@ -12,12 +12,22 @@ pub struct Message {
     pub text: String,
 }
 
+#[derive(Serialize)]
+struct MessageRecord {
+    id: i32,
+    provider: String,
+    text: String,
+    status: String,
+    retry_count: i32,
+    created_at: Option<chrono::NaiveDateTime>,
+}
+
 #[post("/enqueue")]
 pub async fn enqueue(
     db_pool: web::Data<PgPool>,
     msg: web::Json<Message>,
 ) -> impl Responder {
-    let now = Utc::now().naive_utc();  
+    let now = Utc::now().naive_utc();
 
     let query = sqlx::query(
         "INSERT INTO messages (provider, text, status, created_at) VALUES ($1, $2, 'pending', $3)"
@@ -61,4 +71,27 @@ pub async fn sse_events() -> impl Responder {
         .insert_header(("Content-Type", "text/event-stream"))
         .insert_header(("Cache-Control", "no-cache"))
         .streaming(event_stream)
+}
+
+#[get("/messages")]
+pub async fn get_messages(db_pool: web::Data<PgPool>) -> impl Responder {
+    let rows = sqlx::query_as!(
+        MessageRecord,
+        r#"
+        SELECT id, provider, text, status, retry_count, created_at
+        FROM messages
+        ORDER BY created_at DESC
+        LIMIT 50
+        "#
+    )
+    .fetch_all(db_pool.get_ref())
+    .await;
+
+    match rows {
+        Ok(messages) => HttpResponse::Ok().json(messages),
+        Err(e) => {
+            eprintln!("Failed to fetch messages: {}", e);
+            HttpResponse::InternalServerError().body("Failed to fetch messages")
+        }
+    }
 }
