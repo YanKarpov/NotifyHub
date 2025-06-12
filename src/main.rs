@@ -1,6 +1,18 @@
 use actix_web::{get, App, HttpResponse, HttpServer, Responder};
-use tracing::{info};
-use tracing_subscriber;
+use tracing::info;
+use tracing_subscriber::fmt::time::FormatTime;
+use tracing_subscriber::fmt::format::Writer;
+use chrono::Local;
+use std::fmt;
+
+struct SimpleTimer;
+
+impl FormatTime for SimpleTimer {
+    fn format_time(&self, w: &mut Writer<'_>) -> fmt::Result {
+        let now = Local::now();
+        write!(w, "{}", now.format("%Y-%m-%d %H:%M:%S"))
+    }
+}
 
 #[get("/health")]
 async fn health_check() -> impl Responder {
@@ -10,7 +22,9 @@ async fn health_check() -> impl Responder {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::fmt()
+        .with_timer(SimpleTimer) 
+        .init();
 
     info!("Запуск сервера NotifyHub по адресу http://localhost:8080");
 
