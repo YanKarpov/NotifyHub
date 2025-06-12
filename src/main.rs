@@ -1,9 +1,13 @@
-use actix_web::{get, App, HttpResponse, HttpServer, Responder};
-use tracing::info;
+mod handlers;
+
+use actix_web::{App, HttpServer};
+use tracing::{info};
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::fmt::format::Writer;
 use chrono::Local;
 use std::fmt;
+use tokio::time::{sleep, Duration};
+use std::sync::{Arc, Mutex};
 
 struct SimpleTimer;
 
@@ -14,23 +18,34 @@ impl FormatTime for SimpleTimer {
     }
 }
 
-#[get("/health")]
-async fn health_check() -> impl Responder {
-    info!("Вызван эндпоинт проверки здоровья сервера");
-    HttpResponse::Ok().body("OK")
-}
-
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
     tracing_subscriber::fmt()
-        .with_timer(SimpleTimer) 
+        .with_timer(SimpleTimer)
         .init();
+
+    let queue: handlers::SharedQueue = Arc::new(Mutex::new(Vec::new()));
+    let worker_queue = queue.clone();
+
+    tokio::spawn(async move {
+        loop {
+            {
+                let mut q = worker_queue.lock().unwrap();
+                if let Some(msg) = q.pop() {
+                    info!("Отправляем сообщение: provider={}, text={}", msg.provider, msg.text);
+                }
+            }
+            sleep(Duration::from_secs(1)).await;
+        }
+    });
 
     info!("Запуск сервера NotifyHub по адресу http://localhost:8080");
 
-    HttpServer::new(|| {
+    HttpServer::new(move || {
         App::new()
-            .service(health_check)
+            .app_data(actix_web::web::Data::new(queue.clone()))
+            .service(handlers::enqueue)
+            .service(handlers::health_check)
     })
     .bind(("127.0.0.1", 8080))?
     .run()
