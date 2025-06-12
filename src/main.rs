@@ -1,5 +1,5 @@
 mod handlers;
-mod worker; 
+mod worker;
 
 use actix_web::{App, HttpServer, web};
 use tracing::{info};
@@ -11,6 +11,7 @@ use std::fmt;
 use dotenvy::dotenv;
 use std::env;
 use sqlx::PgPool;
+use tokio::sync::broadcast;
 
 struct SimpleTimer;
 
@@ -23,7 +24,7 @@ impl FormatTime for SimpleTimer {
 
 #[actix_web::main]
 async fn main() -> std::io::Result<()> {
-    dotenv().ok(); 
+    dotenv().ok();
     tracing_subscriber::fmt()
         .with_timer(SimpleTimer)
         .init();
@@ -35,15 +36,20 @@ async fn main() -> std::io::Result<()> {
 
     info!("Запуск сервера NotifyHub по адресу http://localhost:8080");
 
+    let (tx, _rx) = broadcast::channel::<String>(100);
+
     let db_pool_clone = db_pool.clone();
+    let tx_clone = tx.clone();
+
     tokio::spawn(async move {
         let provider = worker::MockProvider;
-        worker::worker_loop(db_pool_clone, provider).await;
+        worker::worker_loop(db_pool_clone, provider, tx_clone).await;
     });
 
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(db_pool.clone()))
+            .app_data(web::Data::new(tx.clone()))
             .service(handlers::enqueue)
             .service(handlers::health_check)
             .service(handlers::sse_events)

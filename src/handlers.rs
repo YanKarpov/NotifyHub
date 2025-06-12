@@ -5,6 +5,9 @@ use chrono::{Utc, NaiveDateTime};
 use tokio::time::{interval, Duration};
 use actix_web::web::Bytes;
 use async_stream::stream;
+use tokio::sync::broadcast;
+use tokio::sync::broadcast::error::RecvError;
+
 
 #[derive(Deserialize, Debug)]
 pub struct Message {
@@ -51,19 +54,21 @@ pub async fn health_check() -> impl Responder {
 }
 
 #[get("/events")]
-pub async fn sse_events() -> impl Responder {
-    let mut interval = interval(Duration::from_secs(1));
+pub async fn sse_events(tx: web::Data<broadcast::Sender<String>>) -> impl Responder {
+    let mut rx = tx.subscribe();
 
     let event_stream = stream! {
         loop {
-            interval.tick().await;
-
-            let data = format!(
-                "data: {{\"event\":\"heartbeat\", \"time\":\"{}\"}}\n\n",
-                Utc::now().format("%Y-%m-%d %H:%M:%S")
-            );
-
-            yield Ok::<Bytes, actix_web::Error>(Bytes::from(data));
+            match rx.recv().await {
+                Ok(msg) => {
+                    let data = format!("data: {}\n\n", msg);
+                    yield Ok::<Bytes, actix_web::Error>(Bytes::from(data));
+                }
+                Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                    eprintln!("Client lagged, skipped {} messages", skipped);
+                }
+                Err(broadcast::error::RecvError::Closed) => break,
+            }
         }
     };
 

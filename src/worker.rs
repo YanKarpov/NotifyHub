@@ -3,6 +3,7 @@ use chrono::{Utc, Duration};
 use tokio::time::{sleep, Duration as TokioDuration};
 use crate::handlers::Message; 
 use async_trait::async_trait;
+use tokio::sync::broadcast::Sender;
 
 #[derive(Debug)]
 pub struct DbMessage {
@@ -29,7 +30,11 @@ impl Provider for MockProvider {
     }
 }
 
-pub async fn worker_loop(db_pool: PgPool, provider: impl Provider + Send + Sync + 'static) {
+pub async fn worker_loop(
+    db_pool: PgPool,
+    provider: impl Provider + Send + Sync + 'static,
+    tx: Sender<String>,  
+) {
     loop {
         // Берём до 10 сообщений со статусом pending или retrying, которым пора пытаться отправлять
         let messages = sqlx::query_as!(
@@ -64,6 +69,8 @@ pub async fn worker_loop(db_pool: PgPool, provider: impl Provider + Send + Sync 
                     .execute(&db_pool)
                     .await
                     .unwrap();
+
+                    let _ = tx.send(format!("Message {} sent successfully", msg.id));
                 }
                 Err(_) => {
                     let new_retry_count = msg.retry_count + 1;
@@ -78,6 +85,8 @@ pub async fn worker_loop(db_pool: PgPool, provider: impl Provider + Send + Sync 
                         .execute(&db_pool)
                         .await
                         .unwrap();
+
+                        let _ = tx.send(format!("Message {} failed permanently", msg.id));
                     } else {
                         // Экспоненциальная задержка: 2^retry_count секунд
                         let delay_secs = 2_i64.pow(new_retry_count as u32);
@@ -92,6 +101,11 @@ pub async fn worker_loop(db_pool: PgPool, provider: impl Provider + Send + Sync 
                         .execute(&db_pool)
                         .await
                         .unwrap();
+
+                        let _ = tx.send(format!(
+                            "Message {} will retry after {} seconds (attempt {})",
+                            msg.id, delay_secs, new_retry_count
+                        ));
                     }
                 }
             }
