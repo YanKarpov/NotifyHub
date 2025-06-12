@@ -46,6 +46,7 @@ async fn main() -> std::io::Result<()> {
             .app_data(actix_web::web::Data::new(queue.clone()))
             .service(handlers::enqueue)
             .service(handlers::health_check)
+            .service(handlers::sse_events)  
     })
     .bind(("127.0.0.1", 8080))?
     .run()
