@@ -1,7 +1,7 @@
 use sqlx::PgPool;
 use chrono::{Utc, Duration};
 use tokio::time::{sleep, Duration as TokioDuration};
-use crate::handlers::Message; 
+use crate::handlers::Message;
 use async_trait::async_trait;
 use tokio::sync::broadcast::Sender;
 
@@ -26,6 +26,7 @@ pub struct MockProvider;
 impl Provider for MockProvider {
     async fn send(&self, msg: &Message) -> Result<(), String> {
         println!("Mock send: provider={} text={}", msg.provider, msg.text);
+        // Err("Симулируем фейл".into())
         Ok(())
     }
 }
@@ -33,10 +34,10 @@ impl Provider for MockProvider {
 pub async fn worker_loop(
     db_pool: PgPool,
     provider: impl Provider + Send + Sync + 'static,
-    tx: Sender<String>,  
+    tx: Sender<String>,
 ) {
     loop {
-        // Берём до 10 сообщений со статусом pending или retrying, которым пора пытаться отправлять
+        // Берём до 10 сообщений, которым пора отправляться
         let messages = sqlx::query_as!(
             DbMessage,
             r#"
@@ -54,14 +55,17 @@ pub async fn worker_loop(
 
         for msg in messages {
             println!("Worker: processing message id={}", msg.id);
-            let send_result = provider.send(&Message {
-                provider: msg.provider.clone(),
-                text: msg.text.clone(),
-            }).await;
+
+            let send_result = provider
+                .send(&Message {
+                    provider: msg.provider.clone(),
+                    text: msg.text.clone(),
+                    scheduled_at: msg.next_retry_at, 
+                })
+                .await;
 
             match send_result {
                 Ok(_) => {
-                    // Обновляем статус в базе на done
                     sqlx::query!(
                         "UPDATE messages SET status = 'done' WHERE id = $1",
                         msg.id
@@ -75,8 +79,8 @@ pub async fn worker_loop(
                 Err(_) => {
                     let new_retry_count = msg.retry_count + 1;
                     let max_retries = 5;
+
                     if new_retry_count >= max_retries {
-                        // Если попыток слишком много — ставим failed
                         sqlx::query!(
                             "UPDATE messages SET status = 'failed', retry_count = $1 WHERE id = $2",
                             new_retry_count,
@@ -88,7 +92,6 @@ pub async fn worker_loop(
 
                         let _ = tx.send(format!("Message {} failed permanently", msg.id));
                     } else {
-                        // Экспоненциальная задержка: 2^retry_count секунд
                         let delay_secs = 2_i64.pow(new_retry_count as u32);
                         let next_retry_at = Utc::now().naive_utc() + Duration::seconds(delay_secs);
 

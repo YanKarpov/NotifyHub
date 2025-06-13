@@ -22,6 +22,10 @@
       <textarea id="text"></textarea>
     </label>
     <br />
+    <label>Указать время:
+      <input type="datetime-local" id="scheduled_at" />
+    </label>
+    <br />
     <button type="submit">Send</button>
   </form>
 
@@ -40,27 +44,31 @@
   </table>
 
   <script>
-    // Отправка формы
     document.getElementById('message-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const provider = document.getElementById('provider').value;
       const text = document.getElementById('text').value;
+      const scheduledAt = document.getElementById('scheduled_at').value;
+
+      const payload = { provider, text };
+      if (scheduledAt) {
+        payload.scheduled_at = new Date(scheduledAt).toISOString().slice(0, 19);
+      }
+
       const res = await fetch('/enqueue', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ provider, text })
+        body: JSON.stringify(payload)
       });
       alert(await res.text());
     });
 
-    // SSE поток
     const eventsEl = document.getElementById('events');
     const evtSource = new EventSource('/events');
     evtSource.onmessage = (e) => {
       eventsEl.textContent += e.data + '\n';
     };
 
-    // Загрузка сообщений
     async function loadMessages() {
       const res = await fetch('/messages');
       const messages = await res.json();

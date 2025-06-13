@@ -8,11 +8,11 @@ use async_stream::stream;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
 
-
 #[derive(Deserialize, Debug)]
 pub struct Message {
     pub provider: String,
     pub text: String,
+    pub scheduled_at: Option<NaiveDateTime>, 
 }
 
 #[derive(Serialize)]
@@ -33,11 +33,13 @@ pub async fn enqueue(
     let now = Utc::now().naive_utc();
 
     let query = sqlx::query(
-        "INSERT INTO messages (provider, text, status, created_at) VALUES ($1, $2, 'pending', $3)"
+        "INSERT INTO messages (provider, text, status, created_at, next_retry_at)
+         VALUES ($1, $2, 'pending', $3, $4)"
     )
     .bind(&msg.provider)
     .bind(&msg.text)
-    .bind(now);
+    .bind(now)
+    .bind(msg.scheduled_at); 
 
     match query.execute(db_pool.get_ref()).await {
         Ok(_) => HttpResponse::Ok().body("Message enqueued"),
