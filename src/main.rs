@@ -12,6 +12,8 @@ use dotenvy::dotenv;
 use std::env;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
+use actix_files as fs; 
+
 
 struct SimpleTimer;
 
@@ -54,6 +56,8 @@ async fn main() -> std::io::Result<()> {
             .service(handlers::health_check)
             .service(handlers::sse_events)
             .service(handlers::get_messages)
+            .service(fs::Files::new("/", "./public").index_file("index.html")) 
+
     })
     .bind(("127.0.0.1", 8080))?
     .run()

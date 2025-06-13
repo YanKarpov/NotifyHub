@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <title>NotifyHub</title>
+</head>
+<body>
+  <h1>NotifyHub</h1>
+
+  <form id="message-form">
+    <label>Provider:
+      <select id="provider">
+        <option>SMS</option>
+        <option>Email</option>
+        <option>Push</option>
+        <option>In-App</option>
+      </select>
+    </label>
+    <br />
+    <label>Message:
+      <textarea id="text"></textarea>
+    </label>
+    <br />
+    <button type="submit">Send</button>
+  </form>
+
+  <h2>Events</h2>
+  <pre id="events"></pre>
+
+  <h2>Messages</h2>
+  <button onclick="loadMessages()">Reload</button>
+  <table border="1">
+    <thead>
+      <tr>
+        <th>ID</th><th>Provider</th><th>Text</th><th>Status</th><th>Retry Count</th>
+      </tr>
+    </thead>
+    <tbody id="messages"></tbody>
+  </table>
+
+  <script>
+    // Отправка формы
+    document.getElementById('message-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const provider = document.getElementById('provider').value;
+      const text = document.getElementById('text').value;
+      const res = await fetch('/enqueue', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ provider, text })
+      });
+      alert(await res.text());
+    });
+
+    // SSE поток
+    const eventsEl = document.getElementById('events');
+    const evtSource = new EventSource('/events');
+    evtSource.onmessage = (e) => {
+      eventsEl.textContent += e.data + '\n';
+    };
+
+    // Загрузка сообщений
+    async function loadMessages() {
+      const res = await fetch('/messages');
+      const messages = await res.json();
+      const tbody = document.getElementById('messages');
+      tbody.innerHTML = '';
+      for (const m of messages) {
+        tbody.innerHTML += `<tr>
+          <td>${m.id}</td>
+          <td>${m.provider}</td>
+          <td>${m.text}</td>
+          <td>${m.status}</td>
+          <td>${m.retry_count}</td>
+        </tr>`;
+      }
+    }
+
+    loadMessages();
+  </script>
+</body>
+</html>
