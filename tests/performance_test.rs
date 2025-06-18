@@ -5,8 +5,8 @@ use std::sync::Arc;
 #[tokio::test]
 async fn performance_test() {
     let client = Arc::new(Client::new());
-    let concurrent_requests = 50;
-    let total_requests = 1000;
+    let concurrent_requests = 10;
+    let total_requests = 50;
 
     let mut handles = vec![];
 

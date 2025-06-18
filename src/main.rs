@@ -14,6 +14,10 @@ use sqlx::PgPool;
 use tokio::sync::broadcast;
 use actix_files as fs;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use tokio::time::Duration;
+
 struct SimpleTimer;
 
 impl FormatTime for SimpleTimer {
@@ -39,19 +43,29 @@ async fn main() -> std::io::Result<()> {
 
     let (tx, _rx) = broadcast::channel::<String>(100);
 
-    let db_pool_clone = db_pool.clone();
-    let tx_clone = tx.clone();
+    let worker_count = 4;
+    let mut counters = Vec::with_capacity(worker_count);
 
-    tokio::spawn(async move {
+    for i in 0..worker_count {
+        let counter = Arc::new(AtomicUsize::new(0));
+        counters.push(counter.clone());
+
+        let db_pool_clone = db_pool.clone();
+        let tx_clone = tx.clone();
         let provider = worker::MockProvider;
-        worker::dynamic_worker_pool(
-            db_pool_clone,
-            provider,
-            4, // количество воркеров
-            std::time::Duration::from_secs(5).into(), // интервал опроса БД
-            tx_clone,
-        ).await;
-    });
+
+        tokio::spawn(async move {
+            println!("Worker {} started", i);
+            worker::worker_loop_with_counter(
+                i,
+                db_pool_clone,
+                provider,
+                tx_clone,
+                counter,
+            )
+            .await;
+        });
+    }
 
     HttpServer::new(move || {
         App::new()
