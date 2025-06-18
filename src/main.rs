@@ -2,7 +2,7 @@ mod handlers;
 mod worker;
 
 use actix_web::{App, HttpServer, web};
-use tracing::{info};
+use tracing::info;
 use tracing_subscriber::fmt::time::FormatTime;
 use tracing_subscriber::fmt::format::Writer;
 use chrono::Local;
@@ -12,8 +12,7 @@ use dotenvy::dotenv;
 use std::env;
 use sqlx::PgPool;
 use tokio::sync::broadcast;
-use actix_files as fs; 
-
+use actix_files as fs;
 
 struct SimpleTimer;
 
@@ -45,7 +44,13 @@ async fn main() -> std::io::Result<()> {
 
     tokio::spawn(async move {
         let provider = worker::MockProvider;
-        worker::worker_loop(db_pool_clone, provider, tx_clone).await;
+        worker::dynamic_worker_pool(
+            db_pool_clone,
+            provider,
+            4, // количество воркеров
+            std::time::Duration::from_secs(5).into(), // интервал опроса БД
+            tx_clone,
+        ).await;
     });
 
     HttpServer::new(move || {
@@ -56,8 +61,7 @@ async fn main() -> std::io::Result<()> {
             .service(handlers::health_check)
             .service(handlers::sse_events)
             .service(handlers::get_messages)
-            .service(fs::Files::new("/", "./public").index_file("index.html")) 
-
+            .service(fs::Files::new("/", "./public").index_file("index.html"))
     })
     .bind(("127.0.0.1", 8080))?
     .run()
