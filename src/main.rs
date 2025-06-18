@@ -15,8 +15,7 @@ use tokio::sync::broadcast;
 use actix_files as fs;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use tokio::time::Duration;
+use std::sync::atomic::AtomicUsize;
 
 struct SimpleTimer;
 
@@ -32,6 +31,7 @@ async fn main() -> std::io::Result<()> {
     dotenv().ok();
     tracing_subscriber::fmt()
         .with_timer(SimpleTimer)
+        .with_target(true) 
         .init();
 
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL где?");
@@ -39,7 +39,7 @@ async fn main() -> std::io::Result<()> {
         .await
         .expect("Не удалось подключиться к базе данных");
 
-    info!("Запуск сервера NotifyHub по адресу http://localhost:8080");
+    info!(target: "notifyhub", "Запуск сервера NotifyHub по адресу http://localhost:8080");
 
     let (tx, _rx) = broadcast::channel::<String>(100);
 
@@ -55,7 +55,7 @@ async fn main() -> std::io::Result<()> {
         let provider = worker::MockProvider;
 
         tokio::spawn(async move {
-            println!("Worker {} started", i);
+            info!(target: "notifyhub::worker", worker_id = i, "Worker started");
             worker::worker_loop_with_counter(
                 i,
                 db_pool_clone,

@@ -7,6 +7,7 @@ use actix_web::web::Bytes;
 use async_stream::stream;
 use tokio::sync::broadcast;
 use tokio::sync::broadcast::error::RecvError;
+use tracing::{error, info};
 
 #[derive(Deserialize, Debug)]
 pub struct Message {
@@ -42,9 +43,12 @@ pub async fn enqueue(
     .bind(msg.scheduled_at); 
 
     match query.execute(db_pool.get_ref()).await {
-        Ok(_) => HttpResponse::Ok().body("Message enqueued"),
+        Ok(_) => {
+            info!("Message enqueued: provider={}, text={}", &msg.provider, &msg.text);
+            HttpResponse::Ok().body("Message enqueued")
+        },
         Err(e) => {
-            eprintln!("Failed to insert message: {}", e);
+            error!("Failed to insert message: {}", e);
             HttpResponse::InternalServerError().body("Failed to enqueue message")
         }
     }
@@ -66,10 +70,10 @@ pub async fn sse_events(tx: web::Data<broadcast::Sender<String>>) -> impl Respon
                     let data = format!("data: {}\n\n", msg);
                     yield Ok::<Bytes, actix_web::Error>(Bytes::from(data));
                 }
-                Err(broadcast::error::RecvError::Lagged(skipped)) => {
-                    eprintln!("Client lagged, skipped {} messages", skipped);
+                Err(RecvError::Lagged(skipped)) => {
+                    error!("Client lagged, skipped {} messages", skipped);
                 }
-                Err(broadcast::error::RecvError::Closed) => break,
+                Err(RecvError::Closed) => break,
             }
         }
     };
@@ -97,7 +101,7 @@ pub async fn get_messages(db_pool: web::Data<PgPool>) -> impl Responder {
     match rows {
         Ok(messages) => HttpResponse::Ok().json(messages),
         Err(e) => {
-            eprintln!("Failed to fetch messages: {}", e);
+            error!("Failed to fetch messages: {}", e);
             HttpResponse::InternalServerError().body("Failed to fetch messages")
         }
     }

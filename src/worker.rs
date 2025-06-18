@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use tokio::sync::broadcast::Sender;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use tracing::{info, error};
 
 #[derive(Debug, Clone)]
 pub struct DbMessage {
@@ -28,7 +29,7 @@ pub struct MockProvider;
 #[async_trait]
 impl Provider for MockProvider {
     async fn send(&self, msg: &Message) -> Result<(), String> {
-        println!("Mock send: provider={} text={}", msg.provider, msg.text);
+        info!("Mock send: provider={} text={}", msg.provider, msg.text);
         Ok(())
     }
 }
@@ -56,75 +57,84 @@ pub async fn worker_loop_with_counter(
             Utc::now().naive_utc()
         )
         .fetch_optional(&db_pool)
-        .await
-        .expect("Failed to fetch message");
+        .await;
 
-        if let Some(msg) = maybe_msg {
-            println!("Worker #{worker_id}: processing message id={}", msg.id);
+        match maybe_msg {
+            Ok(Some(msg)) => {
+                info!("Worker #{}: processing message id={}", worker_id, msg.id);
 
-            let send_result = provider
-                .send(&Message {
-                    provider: msg.provider.clone(),
-                    text: msg.text.clone(),
-                    scheduled_at: msg.next_retry_at,
-                })
-                .await;
+                let send_result = provider
+                    .send(&Message {
+                        provider: msg.provider.clone(),
+                        text: msg.text.clone(),
+                        scheduled_at: msg.next_retry_at,
+                    })
+                    .await;
 
-            match send_result {
-                Ok(_) => {
-                    sqlx::query!(
-                        "UPDATE messages SET status = 'done' WHERE id = $1",
-                        msg.id
-                    )
-                    .execute(&db_pool)
-                    .await
-                    .unwrap();
-
-                    let _ = tx.send(format!("Message {} sent successfully", msg.id));
-                    counter.fetch_add(1, Ordering::SeqCst);
-
-                    let count = counter.load(Ordering::SeqCst);
-                    println!("Worker #{worker_id}: processed messages count = {}", count);
-                }
-                Err(_) => {
-                    let new_retry_count = msg.retry_count + 1;
-                    let max_retries = 5;
-
-                    if new_retry_count >= max_retries {
-                        sqlx::query!(
-                            "UPDATE messages SET status = 'failed', retry_count = $1 WHERE id = $2",
-                            new_retry_count,
+                match send_result {
+                    Ok(_) => {
+                        if let Err(e) = sqlx::query!(
+                            "UPDATE messages SET status = 'done' WHERE id = $1",
                             msg.id
                         )
                         .execute(&db_pool)
-                        .await
-                        .unwrap();
+                        .await {
+                            error!("Worker #{}: failed to update message status to done: {}", worker_id, e);
+                        } else {
+                            let _ = tx.send(format!("Message {} sent successfully", msg.id));
+                            counter.fetch_add(1, Ordering::SeqCst);
+                            let count = counter.load(Ordering::SeqCst);
+                            info!("Worker #{}: processed messages count = {}", worker_id, count);
+                        }
+                    }
+                    Err(e) => {
+                        error!("Worker #{}: failed to send message id={} error: {}", worker_id, msg.id, e);
+                        let new_retry_count = msg.retry_count + 1;
+                        let max_retries = 5;
 
-                        let _ = tx.send(format!("Message {} failed permanently", msg.id));
-                    } else {
-                        let delay_secs = 2_i64.pow(new_retry_count as u32);
-                        let next_retry_at = Utc::now().naive_utc() + Duration::seconds(delay_secs);
+                        if new_retry_count >= max_retries {
+                            if let Err(e) = sqlx::query!(
+                                "UPDATE messages SET status = 'failed', retry_count = $1 WHERE id = $2",
+                                new_retry_count,
+                                msg.id
+                            )
+                            .execute(&db_pool)
+                            .await {
+                                error!("Worker #{}: failed to mark message as failed: {}", worker_id, e);
+                            } else {
+                                let _ = tx.send(format!("Message {} failed permanently", msg.id));
+                            }
+                        } else {
+                            let delay_secs = 2_i64.pow(new_retry_count as u32);
+                            let next_retry_at = Utc::now().naive_utc() + Duration::seconds(delay_secs);
 
-                        sqlx::query!(
-                            "UPDATE messages SET status = 'retrying', retry_count = $1, next_retry_at = $2 WHERE id = $3",
-                            new_retry_count,
-                            next_retry_at,
-                            msg.id
-                        )
-                        .execute(&db_pool)
-                        .await
-                        .unwrap();
-
-                        let _ = tx.send(format!(
-                            "Message {} will retry after {} seconds (attempt {})",
-                            msg.id, delay_secs, new_retry_count
-                        ));
+                            if let Err(e) = sqlx::query!(
+                                "UPDATE messages SET status = 'retrying', retry_count = $1, next_retry_at = $2 WHERE id = $3",
+                                new_retry_count,
+                                next_retry_at,
+                                msg.id
+                            )
+                            .execute(&db_pool)
+                            .await {
+                                error!("Worker #{}: failed to update retry info: {}", worker_id, e);
+                            } else {
+                                let _ = tx.send(format!(
+                                    "Message {} will retry after {} seconds (attempt {})",
+                                    msg.id, delay_secs, new_retry_count
+                                ));
+                            }
+                        }
                     }
                 }
+            },
+            Ok(None) => {
+                // Нет сообщений, ждем немного перед следующей проверкой
+                sleep(TokioDuration::from_secs(2)).await;
+            },
+            Err(e) => {
+                error!("Worker #{}: error fetching message from db: {}", worker_id, e);
+                sleep(TokioDuration::from_secs(2)).await;
             }
-        } else {
-            // Нет сообщений, ждем немного перед следующей проверкой
-            sleep(TokioDuration::from_secs(2)).await;
         }
     }
 }
