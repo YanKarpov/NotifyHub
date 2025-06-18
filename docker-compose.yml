@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   notifyhub-db:
-    image: postgres
+    image: postgres:15
     container_name: notifyhub-db
     environment:
       POSTGRES_USER: notifyhub_user
@@ -12,6 +12,19 @@ services:
       - "5432:5432"
     volumes:
       - notifyhub-db-data:/var/lib/postgresql/data
+      - ./migrations/initdb:/docker-entrypoint-initdb.d
+
+  notifyhub-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: notifyhub-app
+    environment:
+      DATABASE_URL: postgres://notifyhub_user:notifyhub_pass@notifyhub-db:5432/notifyhub
+    ports:
+      - "8080:8080"
+    depends_on:
+      - notifyhub-db
 
 volumes:
   notifyhub-db-data:

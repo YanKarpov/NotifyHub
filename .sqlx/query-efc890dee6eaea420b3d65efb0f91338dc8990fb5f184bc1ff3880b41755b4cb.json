@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE messages SET status = 'retrying', retry_count = $1, next_retry_at = $2 WHERE id = $3",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Int4",
+        "Timestamp",
+        "Int4"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "efc890dee6eaea420b3d65efb0f91338dc8990fb5f184bc1ff3880b41755b4cb"
+}
